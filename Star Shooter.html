@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Galaxy Shooter</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+    }
+    #game {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: url('images/background.jpg') no-repeat center center/cover;
+      display: none; /* Le jeu est masqué au début */
+    }
+    #player {
+      position: absolute;
+      bottom: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 60px;
+      height: 60px;
+      background: url('images/spaceship.png') no-repeat center/contain;
+    }
+    .bullet {
+      position: absolute;
+      width: 5px;
+      height: 15px;
+      background: red;
+      z-index: 1;
+    }
+    .enemy {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      background: url('images/enemy.png') no-repeat center/contain;
+      z-index: 2;
+    }
+    .powerup {
+      position: absolute;
+      width: 40px;
+      height: 40px;
+      z-index: 3;
+    }
+    #hud {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      color: white;
+      font-family: sans-serif;
+    }
+    #score, #timer {
+      font-size: 20px;
+    }
+    #pauseMenu, #mainMenu {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(0, 0, 0, 0.8);
+      color: white;
+      padding: 20px;
+      display: block;
+      z-index: 4;
+    }
+    #gamepadIcon {
+      position: absolute;
+      bottom: 10px;
+      right: 10px;
+      width: 60px;
+      height: 60px;
+      display: none;
+    }
+    #muteButton {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      width: 40px;
+      height: 40px;
+      background: url('images/speaker.png') no-repeat center/contain;
+      cursor: pointer;
+      z-index: 5;
+      background-color: white;
+      border-radius: 50%;
+      border: 2px solid #fff;
+    }
+    #fauconMillenium {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      width: 100px;
+      height: 100px;
+      background: url('images/faucon_millenium.png') no-repeat center/contain;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <div id="mainMenu">
+    <h2>Menu Principal</h2>
+    <button onclick="startGame()">Démarrer le jeu</button>
+  </div>
+  <div id="game">
+    <div id="player"></div>
+    <div id="hud">
+      Score: <span id="score">0</span><br>
+      Temps restant: <span id="timer">120</span> secondes
+    </div>
+    <div id="pauseMenu">
+      <h2>Menu Pause</h2>
+      <p>Appuyez sur Échap pour reprendre</p>
+      <button onclick="resumeGame()">Reprendre</button>
+      <button onclick="goToMainMenu()">Retour au Menu Principal</button>
+    </div>
+    <img id="gamepadIcon" src="images/gamepad.png" />
+    <div id="muteButton"></div> <!-- Bouton mute -->
+    <div id="fauconMillenium"></div> <!-- Faucon Millenium -->
+  </div>
+
+  <audio id="shootSound" src="sons/shoot.mp3"></audio>
+  <audio id="explosionSound" src="sons/explosion.mp3"></audio>
+  <audio id="backgroundMusic" src="sons/music.mp3" loop></audio>
+
+  <script>
+    const game = document.getElementById("game");
+    const player = document.getElementById("player");
+    const scoreEl = document.getElementById("score");
+    const timerEl = document.getElementById("timer");
+    const pauseMenu = document.getElementById("pauseMenu");
+    const mainMenu = document.getElementById("mainMenu");
+    const gamepadIcon = document.getElementById("gamepadIcon");
+    const muteButton = document.getElementById("muteButton");
+    const fauconMillenium = document.getElementById("fauconMillenium");
+
+    const shootSound = document.getElementById("shootSound");
+    const explosionSound = document.getElementById("explosionSound");
+    const backgroundMusic = document.getElementById("backgroundMusic");
+
+    let score = 0;
+    let timeLeft = 120;
+    let lastShot = 0;
+    let isPaused = false;
+    let isMuted = false;
+    let powerups = [];
+    let enemyIntervals = [];
+    let bulletIntervals = [];
+    let isFauconActive = false;  // Flag pour savoir si le Faucon Millénium est actif
+    let fauconTimeout;
+
+    function startMusic() {
+      backgroundMusic.play();
+      game.removeEventListener("click", startMusic);
+    }
+    game.addEventListener("click", startMusic);
+
+    function startGame() {
+      mainMenu.style.display = "none";
+      game.style.display = "block";
+      resumeGame(); // Démarrer le jeu
+    }
+
+    function shoot(x, y) {
+      const now = Date.now();
+      if (now - lastShot < (isFauconActive ? 100 : 300) || isPaused) return;  // Vitesse de tir plus rapide si le Faucon est actif
+      lastShot = now;
+      shootSound.play();
+      const bullet = document.createElement("div");
+      bullet.classList.add("bullet");
+      bullet.style.left = x + "px";
+      bullet.style.top = y + "px";
+      game.appendChild(bullet);
+
+      const interval = setInterval(() => {
+        if (isPaused) {
+          clearInterval(interval);
+          return;
+        }
+        bullet.style.top = parseInt(bullet.style.top) - 10 + "px";
+        if (parseInt(bullet.style.top) < 0) {
+          bullet.remove();
+          clearInterval(interval);
+        }
+
+        document.querySelectorAll(".enemy").forEach(enemy => {
+          if (isColliding(bullet, enemy)) {
+            bullet.remove();
+            enemy.remove();
+            score++;
+            scoreEl.textContent = score;
+            explosionSound.play();
+            clearInterval(interval);
+          }
+        });
+      }, 30);
+      
+      bulletIntervals.push(interval);
+    }
+
+    function spawnEnemy() {
+      if (isPaused) return;
+      const enemy = document.createElement("div");
+      enemy.classList.add("enemy");
+      enemy.style.left = Math.random() * (window.innerWidth - 40) + "px";
+      enemy.style.top = "0px";
+      game.appendChild(enemy);
+
+      const moveInterval = setInterval(() => {
+        if (isPaused) {
+          clearInterval(moveInterval);
+          return;
+        }
+        enemy.style.top = parseInt(enemy.style.top) + 5 + "px";
+        if (parseInt(enemy.style.top) > window.innerHeight - 40) {
+          enemy.remove();
+          clearInterval(moveInterval);
+        }
+      }, 50);
+
+      enemyIntervals.push(moveInterval);
+    }
+
+    function spawnFauconMillenium() {
+      if (isPaused) return;
+      const powerup = document.createElement("div");
+      powerup.classList.add("powerup");
+      powerup.style.left = Math.random() * (window.innerWidth - 40) + "px";
+      powerup.style.top = "0px";
+      powerup.style.background = "url('images/faucon_millenium.png') no-repeat center/contain";
+      game.appendChild(powerup);
+
+      const moveInterval = setInterval(() => {
+        if (isPaused) {
+          clearInterval(moveInterval);
+          return;
+        }
+        powerup.style.top = parseInt(powerup.style.top) + 5 + "px";
+        if (parseInt(powerup.style.top) > window.innerHeight - 40) {
+          powerup.remove();
+          clearInterval(moveInterval);
+        }
+      }, 50);
+    }
+
+    function isColliding(a, b) {
+      const ra = a.getBoundingClientRect();
+      const rb = b.getBoundingClientRect();
+      return !(ra.top + 10 > rb.bottom || ra.bottom - 10 < rb.top || ra.right - 10 < rb.left || ra.left + 10 > rb.right);
+    }
+
+    function updateTimer() {
+      if (isPaused) return;
+      timeLeft--;
+      timerEl.textContent = timeLeft;
+      if (timeLeft <= 0) {
+        alert("Temps écoulé ! Score final: " + score);
+        location.reload();
+      }
+    }
+
+    function pauseGame() {
+      isPaused = true;
+      pauseMenu.style.display = "block";
+      backgroundMusic.pause();
+      backgroundMusic.currentTime = 0;
+      
+      enemyIntervals.forEach(interval => clearInterval(interval));
+      bulletIntervals.forEach(interval => clearInterval(interval));
+    }
+
+    function resumeGame() {
+      isPaused = false;
+      pauseMenu.style.display = "none";
+      backgroundMusic.play();
+
+      enemyIntervals = [];
+      bulletIntervals = [];
+      setInterval(() => {
+        if (!isPaused) {
+          spawnEnemy();
+          spawnFauconMillenium();
+          updateTimer();
+        }
+      }, 1000);
+
+      setInterval(() => {
+        if (!isPaused) {
+          spawnEnemy();
+        }
+      }, 1500);
+    }
+
+    function goToMainMenu() {
+      location.reload(); // Retour au menu principal
+    }
+
+    function toggleMute() {
+      isMuted = !isMuted;
+      if (isMuted) {
+        backgroundMusic.pause();
+        muteButton.style.background = "url('images/muted-speaker.png') no-repeat center/contain";
+      } else {
+        backgroundMusic.play();
+        muteButton.style.background = "url('images/speaker.png') no-repeat center/contain";
+      }
+    }
+
+    muteButton.addEventListener("click", toggleMute);
+
+    function activateFaucon() {
+      isFauconActive = true;
+      player.style.background = "url('images/faucon_millenium.png') no-repeat center/contain";
+      fauconMillenium.style.display = "block";
+
+      // Vitesse de tir plus rapide
+      lastShot = 0; // Reset du temps pour permettre un tir immédiat
+
+      // Réinitialisation après 30 secondes
+      fauconTimeout = setTimeout(() => {
+        isFauconActive = false;
+        player.style.background = "url('images/spaceship.png') no-repeat center/contain";
+        fauconMillenium.style.display = "none";
+      }, 30000);  // 30 secondes
+    }
+
+    function handlePowerUpCollision() {
+      // Vérifier les collisions avec le power-up du Faucon Millénium
+      const powerups = document.querySelectorAll('.powerup');
+      powerups.forEach(powerup => {
+        if (isColliding(player, powerup)) {
+          powerup.remove(); // Supprimer le power-up
+          activateFaucon();  // Activer le Faucon Millénium
+        }
+      });
+    }
+
+    // Gestion de l'activation du jeu
+    setInterval(handlePowerUpCollision, 50); // Vérifier fréquemment les collisions
+
+    // Contrôle du mouvement du joueur avec la souris
+    document.addEventListener("mousemove", (e) => {
+      if (isPaused) return;
+      const gameRect = game.getBoundingClientRect();
+      const x = e.clientX - gameRect.left;
+      const playerWidth = player.offsetWidth;
+      player.style.left = Math.max(0, Math.min(x - playerWidth / 2, game.offsetWidth - playerWidth)) + "px";
+    });
+
+    game.addEventListener("click", () => {
+      if (isPaused) return;
+      const rect = player.getBoundingClientRect();
+      shoot(rect.left + rect.width / 2, rect.top);
+    });
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape") {
+        if (isPaused) {
+          resumeGame();
+        } else {
+          pauseGame();
+        }
+      }
+    });
+     // 🎮 Support pour la manette de jeu
+     let gamepadIndex = null;
+
+window.addEventListener("gamepadconnected", (e) => {
+  gamepadIndex = e.gamepad.index;
+  gamepadIcon.style.display = "block";
+});
+
+window.addEventListener("gamepaddisconnected", () => {
+  gamepadIndex = null;
+  gamepadIcon.style.display = "none";
+});
+
+function updateGamepad() {
+  if (isPaused || gamepadIndex === null) {
+    requestAnimationFrame(updateGamepad);
+    return;
+  }
+
+  const gamepad = navigator.getGamepads()[gamepadIndex];
+  if (!gamepad) {
+    requestAnimationFrame(updateGamepad);
+    return;
+  }
+
+  const xAxis = gamepad.axes[0];
+  if (Math.abs(xAxis) > 0.2) {
+    const playerLeft = player.offsetLeft;
+    const moveAmount = xAxis * 10;
+    const newLeft = Math.min(Math.max(0, playerLeft + moveAmount), window.innerWidth - player.offsetWidth);
+    player.style.left = newLeft + "px";
+  }
+
+  const shootBtn = gamepad.buttons[7];
+  if (shootBtn.pressed) {
+    const rect = player.getBoundingClientRect();
+    shoot(rect.left + rect.width / 2, rect.top - 20);
+  }
+
+  const pauseBtn = gamepad.buttons[9];
+  if (pauseBtn.pressed) {
+    if (isPaused) {
+      resumeGame();
+    } else {
+      pauseGame();
+    }
+  }
+  
+  
+
+  requestAnimationFrame(updateGamepad);
+}
+
+requestAnimationFrame(updateGamepad);
+// Fonction pour générer un power-up (avec une probabilité de 30%)
+function spawnPowerUp() {
+  if (Math.random() > 0.7) {  // 30% de chance
+    const powerUpType = Math.random() < 0.5 ? 'doublePoints' : 'extraTime'; // Choisir le type de power-up au hasard
+    const powerUp = document.createElement("div");
+    powerUp.classList.add("powerup");
+    powerUp.style.left = Math.random() * (window.innerWidth - 40) + "px";
+    powerUp.style.top = "0px";
+    powerUp.style.width = "40px";  // Largeur du power-up
+    powerUp.style.height = "40px"; // Hauteur du power-up
+
+    // Assignation de l'image pour le power-up
+    if (powerUpType === 'doublePoints') {
+      powerUp.style.background = "url('images/double_points.png') no-repeat center/contain";
+    } else {
+      powerUp.style.background = "url('images/extra_time.png') no-repeat center/contain";
+    }
+
+    // Ajouter le power-up au jeu
+    game.appendChild(powerUp);
+
+    const moveInterval = setInterval(() => {
+      if (isPaused) {
+        clearInterval(moveInterval);
+        return;
+      }
+      powerUp.style.top = parseInt(powerUp.style.top) + 5 + "px";
+      if (parseInt(powerUp.style.top) > window.innerHeight - 40) {
+        powerUp.remove();
+        clearInterval(moveInterval);
+      }
+    }, 50);
+
+    powerups.push({ powerUp, type: powerUpType, interval: moveInterval });
+  }
+}
+
+
+  </script>
+</body>
+<style>
+  #mainMenu {
+    background: url('images/menu_background.jpg') no-repeat center center/cover;
+    background-size: cover;
+    background-position: center;
+    height: 100vh;  /* Ceci permet de remplir tout l'écran */
+    width: 100%;    /* Assure que le menu occupe toute la largeur de l'écran */
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-direction: column;
+  }
+  
+</style>
+
+
+
+</html>
